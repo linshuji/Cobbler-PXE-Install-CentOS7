@@ -1,0 +1,163 @@
+
+```
+#version=DEVEL
+# System authorization information
+auth --enableshadow --passalgo=sha512
+# Is New Install
+install
+# Use URL installation media
+url --url="http://192.168.60.15/iso/linux/centos7.6.1810/"
+# Use Text install
+text
+# Run the Setup Agent on first boot
+firstboot --enable
+#ignoredisk --only-use=sda
+
+# Keyboard layouts
+keyboard --vckeymap=us --xlayouts='us'
+# System language
+lang en_US.UTF-8 --addsupport=zh_CN.UTF-8
+
+# Network information
+network  --bootproto=static --device=em1 --gateway=192.168.60.1 --ip=192.168.60.13 --nameserver=202.96.128.86 --netmask=255.255.255.0 --onboot=yes --ipv6=auto --no-activate
+#network  --bootproto=dhcp --device=em1 --onboot=yes --ipv6=auto
+network  --bootproto=dhcp --device=em2 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em3 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em4 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p1 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p2 --onboot=off --ipv6=auto
+network  --hostname=datanode03.localdomain
+
+# Root password
+rootpw --iscrypted $6$Yz0C6oD8HUwFXFux$ujgos55c6Onb67lXbVJfO5XH5S8W4H12oymBkhk5z2tha94r5VTAjRsVyqmI7MolbyN0Tf6UHReXPQgsCIlhI1
+# System services
+services --disabled="chronyd"
+# System timezone
+timezone Asia/Shanghai --isUtc --nontp
+
+zerombr
+# System bootloader configuration
+bootloader --append=" crashkernel=auto" --location=mbr --boot-drive=sda
+# Partition clearing information
+clearpart --all --initlabel --drives=sda,sdb
+# Disk partitioning information
+#part /home --fstype="xfs" --ondisk=sda --size=850443
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part / --fstype="xfs" --ondisk=sda --size=102400
+
+#part pv.499 --fstype="lvmpv" --ondisk=sdb --size=953343
+part pv.499 --fstype="lvmpv" --ondisk=sdb --grow
+#part pv.493 --fstype="lvmpv" --ondisk=sda --size=850443
+part pv.493 --fstype="lvmpv" --ondisk=sda --grow
+volgroup centos --pesize=4096 pv.493 pv.499
+#logvol /home  --fstype="xfs" --size=1803780 --name=home --vgname=centos
+logvol /home  --fstype="xfs" --size=800000 --grow --name=home --vgname=centos
+
+
+# Disabled selinux
+selinux --disabled
+
+# Disabled firewall
+firewall --disabled
+
+reboot
+
+
+%packages
+@^web-server-environment
+@base
+@core
+@web-server
+kexec-tools
+
+%end
+
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+
+%end
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+```
+
+```
+#version=DEVEL
+# System authorization information
+auth --enableshadow --passalgo=sha512
+# Is New Install
+install
+# Use URL installation media
+url --url=$tree
+# Use Text install
+text
+# Run the Setup Agent on first boot
+firstboot --enable
+#ignoredisk --only-use=sda
+
+# Keyboard layouts
+keyboard --vckeymap=us --xlayouts='us'
+# System language
+lang en_US.UTF-8 --addsupport=zh_CN.UTF-8
+
+# Network information
+network  --bootproto=dhcp --device=em1 --onboot=yes --ipv6=auto
+network  --bootproto=dhcp --device=em2 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em3 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em4 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p1 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p2 --onboot=off --ipv6=auto
+network  --hostname=datanode03.localdomain
+
+# Root password
+rootpw --iscrypted $6$Yz0C6oD8HUwFXFux$ujgos55c6Onb67lXbVJfO5XH5S8W4H12oymBkhk5z2tha94r5VTAjRsVyqmI7MolbyN0Tf6UHReXPQgsCIlhI1
+# System services
+services --disabled="chronyd"
+# System timezone
+timezone Asia/Shanghai --isUtc --nontp
+
+zerombr
+# System bootloader configuration
+bootloader --append=" crashkernel=auto" --location=mbr --boot-drive=sda
+# Partition clearing information
+clearpart --all --initlabel --drives=sda,sdb
+# Disk partitioning information
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part / --fstype="xfs" --ondisk=sda --size=102400
+
+part pv.499 --fstype="lvmpv" --ondisk=sdb --grow
+part pv.493 --fstype="lvmpv" --ondisk=sda --grow
+volgroup centos --pesize=4096 pv.493 pv.499
+logvol /home  --fstype="xfs" --size=800000 --grow --name=home --vgname=centos
+
+
+# Disabled selinux
+selinux --disabled
+
+# Disabled firewall
+firewall --disabled
+
+reboot
+
+
+%packages
+@^web-server-environment
+@base
+@core
+@web-server
+kexec-tools
+
+%end
+
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+
+%end
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+```
