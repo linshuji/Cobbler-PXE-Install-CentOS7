@@ -1,0 +1,541 @@
+## 一、环境
+暂且把主机称为kpmserver（kickstart pxe manager server）
+### 1.kpmserver系统及内核版本
+```
+# cat /etc/redhat-release
+CentOS Linux release 7.5.1804 (Core)
+# uname -r
+3.10.0-862.el7.x86_64
+```
+
+### 2.关闭selinux
+查看selinux当前的状态
+```
+# getenforce
+Enforcing
+```
+**2.1永久关闭**
+修改selinux配置文件，重启后永久生效
+```
+# vim /etc/selinux/config
+```
+将SELINUX的值设置为disabled
+```
+SELINUX=disabled
+```
+**2.2临时关闭**
+```
+# setenforce 0
+```
+
+**2.3查看selinux状态**
+```
+# getenforce
+Permissive
+```
+目前是临时关闭，因为改了配置文件，重启后会变成disabled
+
+### 3.关闭防火墙
+**3.1查看防火墙状态**
+```
+# systemctl status firewalld.service
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+   Active: active (running) since 一 2018-12-17 15:44:36 CST; 2 months 6 days ago
+     Docs: man:firewalld(1)
+ Main PID: 21653 (firewalld)
+   CGroup: /system.slice/firewalld.service
+           └─21653 /usr/bin/python -Es /usr/sbin/firewalld --nofork --nopid
+
+12月 17 15:44:36 localhost.localdomain systemd[1]: Starting firewalld - dynamic firewall daemon...
+12月 17 15:44:36 localhost.localdomain systemd[1]: Started firewalld - dynamic firewall daemon.
+```
+
+**3.2关闭防火墙**
+```
+# systemctl stop firewalld.service
+```
+
+**3.3确认防火墙状态**
+```
+# systemctl status firewalld.service
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+   Active: inactive (dead) since 五 2019-02-22 16:29:07 CST; 23s ago
+     Docs: man:firewalld(1)
+  Process: 21653 ExecStart=/usr/sbin/firewalld --nofork --nopid $FIREWALLD_ARGS (code=exited, status=0/SUCCESS)
+ Main PID: 21653 (code=exited, status=0/SUCCESS)
+
+12月 17 15:44:36 localhost.localdomain systemd[1]: Starting firewalld - dynamic firewall daemon...
+12月 17 15:44:36 localhost.localdomain systemd[1]: Started firewalld - dynamic firewall daemon.
+2月 22 16:29:06 localhost.localdomain systemd[1]: Stopping firewalld - dynamic firewall daemon...
+2月 22 16:29:07 localhost.localdomain systemd[1]: Stopped firewalld - dynamic firewall daemon.
+```
+
+### 4.确认网络信息
+确认当前的ip地址
+```
+# hostname -I
+192.168.60.15
+```
+
+## 二、安装各项服务
+### 1.安装dhcp服务
+**1.1使用yum安装dhcp**
+```
+# yum -y install dhcp
+```
+**1.2配置dhcp服务**
+```
+cat >>/etc/dhcp/dhcpd.conf<<EOF
+subnet 192.168.60.0 netmask 255.255.255.0 {
+range 192.168.60.2 192.168.60.14;
+option subnet-mask 255.255.255.0;
+default-lease-time 21600;
+max-lease-time 43200;
+next-server 192.168.60.15;
+filename "/pxelinux.0";
+}
+EOF
+```
+*配置文件说明*
+```
+cat >>/etc/dhcp/dhcpd.conf<<EOF
+subnet 192.168.60.0 netmask 255.255.255.0 {
+range 192.168.60.2 192.168.60.14; # 可分配的起始IP-结束IP
+option subnet-mask 255.255.255.0; # 设定netmask
+default-lease-time 21600; # 设置默认的IP租用期限
+max-lease-time 43200; # 设置最大的IP租用期限
+next-server 192.168.60.15; # 告知客户端TFTP服务器的IP
+filename "/pxelinux.0"; # 告知客户端从TFTP跟目录下载pxelinux.0文件
+}
+EOF
+```
+**1.3启动dhcp服务**
+```
+# systemctl start dhcpd.service
+```
+**1.4检查dhcp状态**
+```
+# systemctl status dhcpd.service
+● dhcpd.service - DHCPv4 Server Daemon
+   Loaded: loaded (/usr/lib/systemd/system/dhcpd.service; disabled; vendor preset: disabled)
+   Active: active (running) since 五 2019-02-22 16:53:19 CST; 1min 0s ago
+     Docs: man:dhcpd(8)
+           man:dhcpd.conf(5)
+ Main PID: 15726 (dhcpd)
+   Status: "Dispatching packets..."
+   CGroup: /system.slice/dhcpd.service
+           └─15726 /usr/sbin/dhcpd -f -cf /etc/dhcp/dhcpd.conf -user dhcpd -group dhcpd --no-pid
+```
+**1.5检查端口信息**
+```
+# netstat -lntup | grep dhcpd
+udp        0      0 0.0.0.0:67              0.0.0.0:*                           16179/dhcpd
+```
+**1.6检查日志**
+```
+# tail -f /var/log/messages
+Feb 22 17:08:10 localhost systemd: Started DHCPv4 Server Daemon.
+Feb 22 17:08:10 localhost dhcpd: Listening on LPF/em1/xx:ca:xx:fb:xx:xx/192.168.60.0/24
+Feb 22 17:08:10 localhost dhcpd: Sending on   LPF/em1/xx:ca:xx:fb:xx:xx/192.168.60.0/24
+Feb 22 17:08:10 localhost dhcpd: Sending on   Socket/fallback/fallback-net
+```
+
+**1.7设置开机启动**
+```
+# systemctl enable httpd
+Created symlink from /etc/systemd/system/multi-user.target.wants/httpd.service to /usr/lib/systemd/system/httpd.service.
+```
+
+### 2.安装TFTP服务
+**2.1安装TFTP软件**
+```
+# yum -y install tftp-server
+```
+**2.2启动TFTP服务**
+```
+# systemctl start tftp.socket
+```
+**2.3查看TFTP状态**
+```
+# systemctl status tftp.socket
+● tftp.socket - Tftp Server Activation Socket
+   Loaded: loaded (/usr/lib/systemd/system/tftp.socket; disabled; vendor preset: disabled)
+   Active: active (listening) since 五 2019-02-22 17:32:42 CST; 15s ago
+   Listen: [::]:69 (Datagram)
+
+2月 22 17:32:42 localhost.localdomain systemd[1]: Listening on Tftp Server Activation Socket.
+2月 22 17:32:42 localhost.localdomain systemd[1]: Starting Tftp Server Activation Socket.
+```
+**2.4开机启动**
+```
+# systemctl enable tftp
+Created symlink from /etc/systemd/system/sockets.target.wants/tftp.socket to /usr/lib/systemd/system/tftp.socket.
+```
+
+### 3.获取pxelinux.0系统
+**3.1通过安装软件获取**
+```
+# yum -y install syslinux
+```
+**3.2复制pxelinux.0系统到tftp根目录**
+```
+# cp /usr/share/syslinux/pxelinux.0 /var/lib/tftpboot/
+# ll /var/lib/tftpboot/
+总用量 28
+-rw-r--r--. 1 root root 26759 2月  22 17:40 pxelinux.0
+```
+
+### 4.安装httpd服务
+**4.1.安装httpd服务**
+```
+# yum -y install httpd
+```
+**4.2启动httpd服务**
+```
+# systemctl start httpd.service
+```
+**4.3查看httpd服务状态**
+```
+# systemctl status httpd.service
+● httpd.service - The Apache HTTP Server
+   Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; vendor preset: disabled)
+   Active: active (running) since 五 2019-02-22 17:52:41 CST; 34s ago
+     Docs: man:httpd(8)
+           man:apachectl(8)
+ Main PID: 17355 (httpd)
+   Status: "Total requests: 0; Current requests/sec: 0; Current traffic:   0 B/sec"
+   CGroup: /system.slice/httpd.service
+           ├─17355 /usr/sbin/httpd -DFOREGROUND
+           ├─17356 /usr/sbin/httpd -DFOREGROUND
+           ├─17357 /usr/sbin/httpd -DFOREGROUND
+           ├─17358 /usr/sbin/httpd -DFOREGROUND
+           ├─17359 /usr/sbin/httpd -DFOREGROUND
+           ├─17360 /usr/sbin/httpd -DFOREGROUND
+           └─17361 /usr/sbin/httpd -DFOREGROUND
+
+2月 22 17:52:41 localhost.localdomain systemd[1]: Starting The Apache HTTP Server...
+2月 22 17:52:41 localhost.localdomain httpd[17355]: AH00558: httpd: Could not reliably determine the server's fully qualified domain nam...message
+2月 22 17:52:41 localhost.localdomain systemd[1]: Started The Apache HTTP Server.
+```
+**4.4.访问httpd界面**
+此时在浏览器输入http://192.168.60.15/即可看到httpd的欢迎界面。
+
+### 5.挂载系统镜像
+**5.1.挂载系统光盘**
+可以将光盘直接挂载到http的目录下，但是这样的确定是光盘读取比较慢，不如将光盘的文件复制到硬盘中来得快。
+```
+# mkdir -p /var/www/html/iso/linux/centos6.10
+# mkdir -p /var/www/html/iso/linux/centos7.6.1810
+# mkdir /mnt/centos6
+# mkdir /mnt/centos7
+# mount CentOS-6.10-x86_64-bin-DVD1.iso /mnt/centos6/
+# mount CentOS-7-x86_64-DVD-1810.iso /mnt/centos7/
+# cp -R /mnt/centos6/* /var/www/html/iso/linux/centos6.10/
+# cp -R /mnt/centos7/* /var/www/html/iso/linux/centos7.6.1810/
+# mkdir -pv /var/www/html/ks/linux/{centos6.10,centos7.6.1810}
+# chmod -R 775 /var/www/html/
+```
+**5.2.复制启动引导文件到tftp根目录**
+```
+# mkdir -pv /var/lib/tftpboot/linux/centos{6.10,7.6.1810}
+# cp /var/www/html/iso/linux/centos6.10/isolinux/vesamenu.c32 /var/lib/tftpboot/
+# cp /var/www/html/iso/linux/centos6.10/isolinux/{vmlinuz,initrd.img} /var/lib/tftpboot/linux/centos6.10/
+# cp /var/www/html/iso/linux/centos7.6.1810/isolinux/{vmlinuz,initrd.img} /var/lib/tftpboot/linux/centos7.6.1810/
+# cp /var/www/html/iso/linux/centos6.10/isolinux/isolinux.cfg /var/lib/tftpboot/pxelinux.cfg/default
+```
+### 6.配置ks.cfg安装文件
+如果不使用kickstart图形界面来配置ks.cfg文件，也可以从已经安装好的CentOS系统中提取，路径为/root/anaconda-ks.cfg，或者直接使用Vim编辑一个都行。
+```
+# cp /root/anaconda-ks.cfg /var/www/html/ks/linux/centos6.10/default.cfg
+# cp /root/anaconda-ks.cfg /var/www/html/ks/linux/centos7.6.1810/default.cfg
+```
+**6.1.CentOS6.10配置文件**
+```
+vim /var/www/html/ks/linux/centos6.10/default.cfg
+```
+配置内容如下，编写完成后，退出保存即可。
+```
+#ckstart file automatically generated by anaconda.
+#version=DEVEL
+# Install OS instead of upgrade  指明是安装系统还是升级系统
+install
+# Use URL installation media 声明系统镜像的路径
+url --url="http://192.168.60.15/iso/linux/centos6.10/"
+# Use Text install 使用文本模式或者图形模式安装系统
+text
+# System language 语言设定
+lang en_US.UTF-8
+# Keyboard layouts 键盘设定
+keyboard us
+# Network information 网络配置
+network --onboot no --device em1 --bootproto dhcp --noipv6
+network --onboot no --device em2 --bootproto dhcp --noipv6
+network --onboot no --device em3 --bootproto dhcp --noipv6
+network --onboot no --device em4 --bootproto dhcp --noipv6
+# Firewall configuration firewall是否关闭
+firewall --disabled
+# Reboot after installation 声明安装完成后重启系统
+reboot
+# Do not configure the X Window System  是否安装图形界面
+skipx
+# System authorization information 密钥加密算法启用shadow文件
+authconfig --enableshadow --passalgo=sha512
+# Root password 设定root密码
+rootpw --iscrypted $6$Yz0C6oD8HUwFXFux$ujgos55c6Onb67lXbVJfO5XH5S8W4H12oymBkhk5z2tha94r5VTAjRsVyqmI7MolbyN0Tf6UHReXPQgsCIlhI1
+# SELinux configuration selinux是否关闭
+selinux --disabled
+# System timezone 设置时区
+timezone --utc Asia/Shanghai
+# System bootloader configuration 设定BootLoader
+bootloader --location=mbr --driveorder=sda --append="crashkernel=auto rhgb quiet"
+# The following is the partition information you requested
+# Note that any partitions you deleted are not expressed
+# here so unless you clear all partitions first, this is
+# not guaranteed to work
+#clearpart --none
+
+# Partition clearing information 清除全部分区
+clearpart --all --initlabel --drives=sda
+
+# Disk partitioning information 分区设定
+part /home --fstype="ext4" --size=850443
+part /boot --fstype="ext4" --size=500
+part / --fstype="ext4" --size=102400
+
+# 安装的包设定（这里使用基本服务的版本）
+%packages
+@base
+@console-internet
+@core
+@debugging
+@directory-client
+@hardware-monitoring
+@java-platform
+@large-systems
+@network-file-system-client
+@performance
+@perl-runtime
+@server-platform
+@server-policy
+@workstation-policy
+pax
+oddjob
+sgpio
+device-mapper-persistent-data
+samba-winbind
+certmonger
+pam_krb5
+krb5-workstation
+perl-DBD-SQLite
+%end
+```
+
+**6.2.CentOS7.6.1810配置文件**
+```
+vim /var/www/html/ks/linux/centos7.6.1810/default.cfg
+```
+配置内容如下，编写完成后，退出保存即可。
+```
+#version=DEVEL
+# System authorization information
+auth --enableshadow --passalgo=sha512
+# Is New Install
+install
+# Use URL installation media
+url --url="http://192.168.60.15/iso/linux/centos7.6.1810/"
+# Use Text install
+text
+# Run the Setup Agent on first boot
+firstboot --enable
+ignoredisk --only-use=sda
+# Keyboard layouts
+keyboard --vckeymap=us --xlayouts='us'
+# System language
+lang en_US.UTF-8 --addsupport=zh_CN.UTF-8
+
+# Network information
+network  --bootproto=dhcp --device=em1 --onboot=yes --ipv6=auto
+network  --bootproto=dhcp --device=em2 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em3 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em4 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p1 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p2 --onboot=off --ipv6=auto
+network  --hostname=cmserver.localdomain
+
+# Root password
+rootpw --iscrypted $6$Yz0C6oD8HUwFXFux$ujgos55c6Onb67lXbVJfO5XH5S8W4H12oymBkhk5z2tha94r5VTAjRsVyqmI7MolbyN0Tf6UHReXPQgsCIlhI1
+# System services
+services --disabled="chronyd"
+# System timezone
+timezone Asia/Shanghai --isUtc --nontp
+# System bootloader configuration
+bootloader --append=" crashkernel=auto" --location=mbr --boot-drive=sda
+# Partition clearing information
+clearpart --all --initlabel --drives=sda
+# Disk partitioning information
+part /home --fstype="xfs" --ondisk=sda --size=850443
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part / --fstype="xfs" --ondisk=sda --size=102400
+
+# Disabled selinux
+selinux --disabled
+
+# Disabled firewall
+firewall --disabled
+
+reboot
+
+
+%packages
+@^web-server-environment
+@base
+@core
+@web-server
+kexec-tools
+
+%end
+
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+
+%end
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+```
+
+### 7.配置pxe引导文件
+```
+# vim /var/lib/tftpboot/pxelinux.cfg/default
+```
+引导文件内容如下，
+```
+default vesamenu.c32
+#prompt 1
+# 默认时间 60*1/10s
+timeout 60
+
+display boot.msg
+
+menu background splash.jpg
+menu title Welcome to CentOS 6.10!
+menu color border 0 #ffffffff #00000000
+menu color sel 7 #ffffffff #ff000000
+menu color title 0 #ffffffff #00000000
+menu color tabmsg 0 #ffffffff #00000000
+menu color unsel 0 #ffffffff #00000000
+menu color hotsel 0 #ff000000 #ffffffff
+menu color hotkey 7 #ffffffff #ff000000
+menu color scrollbar 0 #ffffffff #00000000
+
+# 安装菜单选项，默认安装CentOS7，
+label linux7
+  menu label Install CentOS^7
+  menu default
+  kernel linux/centos7.6.1810/vmlinuz
+  append initrd=linux/centos7.6.1810/initrd.img text ks=http://192.168.60.15/ks/linux/centos7.6.1810/default.cfg
+label linux6
+  menu label Install CentOS^6
+  kernel linux/centos6.10/vmlinuz
+  append initrd=linux/centos6.10/initrd.img text ks=http://192.168.60.15/ks/linux/centos6.10/default.cfg ksdevice=em1
+```
+**注意事项**
+1.超时的单位为1/10s,所以timeout 60的超时即为6s。
+2.在centos6中，服务器多网口的情况下，需要指定网口，即ksdevice=em1，其中em1为网口名字。否则需要选择网口才能继续进行安装。
+
+**7.1.tftpboot目录结构**
+```
+# tree /var/lib/tftpboot/
+/var/lib/tftpboot/
+├── linux
+│   ├── centos6.10
+│   │   ├── initrd.img
+│   │   └── vmlinuz
+│   └── centos7.6.1810
+│       ├── initrd.img
+│       └── vmlinuz
+├── pxelinux.0
+├── pxelinux.cfg
+│   ├── default
+└── vesamenu.c32
+```
+
+### 8.自定义PXE安装（可选）
+在上面的安装配置中，安装完成的操作系统，环境都是一样的。因为都是使用一份ks.cfg配置，假如现在有如下的一些需求解决：
+  - 1.安装完成后，不同台服务器的hostname、firewall配置都不一样。
+  - 2.重装一批服务器，但是不想改变服务器的IP（因为包括服务器及网线都贴好了相应的标签）
+针对上面的两个需求，都是可以在安装的时候，使用不同的ks.cfg文件来实现，因为ks.cfg里面定义了包括ip、hostname、firewall等等的配置。而ks.cfg是通过pxe引导文件来确定的，所以修改pxe去使用不同的ks.cfg即可，不再只是使用default配置。
+**8.1.PXE配置文件搜索方式**
+由于多个客户端从一个PXE服务器引导，PXE引导映像使用了一个复杂的配置文件搜索方式来查找对客户机的配置文件。查找顺序方式如下：
+  - 1.以客户机网卡的MAC作为查找方式
+  - 2.若以网卡MAC的查找方式，无法找到配置文件，则以客户机分配到的IP地址作为查找方式（IP需转换为16进制）
+  - 3.若以客户机IP的查找方式，仍无法找到配置文件，则使用default配置
+
+*例子：*
+如果客户机的网卡MAC为：b8-2a-72-e0-19-d1，对应的IP地址为：192.168.60.12，那么客户机首先尝试以MAC地址为文件名进行匹配，如果不存在就以IP地址来查找。所以根据上述环境，这台主机第一个搜索的配置文件名为：/var/lib/tftpboot/pxelinux.cfg/01-b8-2a-72-e0-19-d1 。如果文件不存在，则会根据已分配到IP 192.168.60.12来查找。这个算法就复杂一些，PXE映像查找会根据IP地址16进制命名的客户机配置文件。例如192.168.60.12对应的16进制为：C0A83C0C（可通过syslinux软件包提供的gethostip命令将ip转为16进制）。
+故以MAC为文件名的情况下，如果找不到，则会查找/var/lib/tftpboot/pxelinux.cfg/C0A83C0C，若C0A83C0C找不到，则尝试查找C0A83C0；若仍然找不到C0A83C0，则尝试查找C0A83C;以此类推，直到查找到C文件，如果C文件也不存在，那么最后尝试查找default文件。
+所以针对此客户机查找pxelinux的顺序如下(其他客户机原理也一致)：
+```
+/var/lib/tftpboot/pxelinux.cfg/01-b8-2a-72-e0-19-d1
+/var/lib/tftpboot/pxelinux.cfg/C0A83C0C
+/var/lib/tftpboot/pxelinux.cfg/C0A83C0
+/var/lib/tftpboot/pxelinux.cfg/C0A83C
+/var/lib/tftpboot/pxelinux.cfg/C0A83
+/var/lib/tftpboot/pxelinux.cfg/C0A8
+/var/lib/tftpboot/pxelinux.cfg/C0A
+/var/lib/tftpboot/pxelinux.cfg/C0
+/var/lib/tftpboot/pxelinux.cfg/C
+/var/lib/tftpboot/pxelinux.cfg/default
+```
+
+*注意事项*
+如果是MAC为PXE的文件名，必须在MAC前面加 01- ，即b8-2a-72-e0-19-d1对应的文件名为/var/lib/tftpboot/pxelinux.cfg/01-b8-2a-72-e0-19-d1。
+
+**8.2.配置完成的目录**
+*tftp目录*
+```
+# tree /var/lib/tftpboot/
+/var/lib/tftpboot/
+├── linux
+│   ├── centos6.10
+│   │   ├── initrd.img
+│   │   └── vmlinuz
+│   └── centos7.6.1810
+│       ├── initrd.img
+│       └── vmlinuz
+├── pxelinux.0
+├── pxelinux.cfg
+│   ├── 01-54-9f-35-0a-5d-90
+│   ├── 01-74-86-7a-d4-1c-f4
+│   ├── 01-90-b1-1c-2e-47-93
+│   ├── 01-b8-2a-72-e0-19-d1
+│   ├── 01-b8-ca-3a-fb-a5-32
+│   └── 01-c8-1f-66-ec-16-99
+└── vesamenu.c32
+```
+*ks.cfg目录*
+```
+# tree /var/www/html/ks
+/var/www/html/ks
+└── linux
+    ├── centos6.10
+    │   ├── 54-9F-35-0A-5D-90.cfg
+    │   ├── 74-86-7A-D4-1C-F4.cfg
+    │   ├── 90-B1-1C-2E-47-93.cfg
+    │   ├── B8-2A-72-E0-19-D1.cfg
+    │   ├── B8-CA-3A-FB-A5-32.cfg
+    │   ├── C8-1F-66-EC-16-99.cfg
+    │   └── centos6.cfg
+    └── centos7.6.1810
+        ├── 54-9F-35-0A-5D-90.cfg
+        ├── 74-86-7A-D4-1C-F4.cfg
+        ├── 90-B1-1C-2E-47-93.cfg
+        ├── B8-2A-72-E0-19-D1.cfg
+        ├── B8-CA-3A-FB-A5-32.cfg
+        ├── C8-1F-66-EC-16-99.cfg
+        └── centos7.cfg
+```
