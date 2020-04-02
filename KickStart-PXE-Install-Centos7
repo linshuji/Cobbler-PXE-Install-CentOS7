@@ -1,0 +1,387 @@
+# 一、环境
+
+暂且把主机称为kpmserver（kickstart pxe manager server）
+
+## 1.kpmserver系统及内核版本
+
+```
+# cat /etc/redhat-release
+CentOS Linux release 7.5.1804 (Core)
+# uname -r
+3.10.0-862.el7.x86_64
+```
+
+## 2.关闭selinux
+
+查看selinux当前的状态
+
+```
+# getenforce
+Enforcing
+```
+
+### 2.1永久关闭
+
+修改selinux配置文件，重启后永久生效
+
+```
+# vim /etc/selinux/config
+```
+
+将SELINUX的值设置为disabled
+
+```
+SELINUX=disabled
+```
+
+### 2.2临时关闭
+
+```
+# setenforce 0
+```
+
+### 2.3查看selinux状态
+
+```
+# getenforce
+Permissive
+```
+
+目前是临时关闭，因为改了配置文件，重启后会变成disabled
+
+## 3.关闭防火墙
+### 3.1查看防火墙状态
+
+```
+# systemctl status firewalld.service
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+   Active: active (running) since 一 2018-12-17 15:44:36 CST; 2 months 6 days ago
+     Docs: man:firewalld(1)
+ Main PID: 21653 (firewalld)
+   CGroup: /system.slice/firewalld.service
+           └─21653 /usr/bin/python -Es /usr/sbin/firewalld --nofork --nopid
+
+12月 17 15:44:36 localhost.localdomain systemd[1]: Starting firewalld - dynamic firewall daemon...
+12月 17 15:44:36 localhost.localdomain systemd[1]: Started firewalld - dynamic firewall daemon.
+```
+
+### 3.2关闭防火墙
+
+```
+# systemctl stop firewalld.service
+```
+
+### 3.3确认防火墙状态
+
+```
+# systemctl status firewalld.service
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+   Active: inactive (dead) since 五 2019-02-22 16:29:07 CST; 23s ago
+     Docs: man:firewalld(1)
+  Process: 21653 ExecStart=/usr/sbin/firewalld --nofork --nopid $FIREWALLD_ARGS (code=exited, status=0/SUCCESS)
+ Main PID: 21653 (code=exited, status=0/SUCCESS)
+
+12月 17 15:44:36 localhost.localdomain systemd[1]: Starting firewalld - dynamic firewall daemon...
+12月 17 15:44:36 localhost.localdomain systemd[1]: Started firewalld - dynamic firewall daemon.
+2月 22 16:29:06 localhost.localdomain systemd[1]: Stopping firewalld - dynamic firewall daemon...
+2月 22 16:29:07 localhost.localdomain systemd[1]: Stopped firewalld - dynamic firewall daemon.
+```
+
+## 4.确认网络信息
+
+确认当前的ip地址
+
+```
+# hostname -I
+192.168.60.15
+```
+
+# 二、安装各项服务
+## 1.安装dhcp服务
+### 1.1使用yum安装dhcp
+
+```
+# yum -y install dhcp
+```
+
+### 1.2配置dhcp服务
+
+```
+cat >>/etc/dhcp/dhcpd.conf<<EOF
+subnet 192.168.60.0 netmask 255.255.255.0 {
+range 192.168.60.9 192.168.60.14;
+option subnet-mask 255.255.255.0;
+default-lease-time 21600;
+max-lease-time 43200;
+next-server 192.168.60.15;
+filename "/pxelinux.0";
+}
+EOF
+```
+
+**配置文件说明**
+
+```
+cat >>/etc/dhcp/dhcpd.conf<<EOF
+subnet 192.168.60.0 netmask 255.255.255.0 {
+range 192.168.60.9 192.168.60.14; # 可分配的起始IP-结束IP
+option subnet-mask 255.255.255.0; # 设定netmask
+default-lease-time 21600; # 设置默认的IP租用期限
+max-lease-time 43200; # 设置最大的IP租用期限
+next-server 192.168.60.15; # 告知客户端TFTP服务器的IP
+filename "/pxelinux.0"; # 告知客户端从TFTP跟目录下载pxelinux.0文件
+}
+EOF
+```
+
+### 1.3启动dhcp服务
+
+```
+# systemctl start dhcpd.service
+```
+
+### 1.4检查dhcp状态
+
+```
+# systemctl status dhcpd.service
+● dhcpd.service - DHCPv4 Server Daemon
+   Loaded: loaded (/usr/lib/systemd/system/dhcpd.service; disabled; vendor preset: disabled)
+   Active: active (running) since 五 2019-02-22 16:53:19 CST; 1min 0s ago
+     Docs: man:dhcpd(8)
+           man:dhcpd.conf(5)
+ Main PID: 15726 (dhcpd)
+   Status: "Dispatching packets..."
+   CGroup: /system.slice/dhcpd.service
+           └─15726 /usr/sbin/dhcpd -f -cf /etc/dhcp/dhcpd.conf -user dhcpd -group dhcpd --no-pid
+```
+
+### 1.5检查端口信息
+
+```
+# netstat -lntup | grep dhcpd
+udp        0      0 0.0.0.0:67              0.0.0.0:*                           16179/dhcpd
+```
+
+### 1.6检查日志
+
+```
+# tail -f /var/log/messages
+Feb 22 17:08:10 localhost systemd: Started DHCPv4 Server Daemon.
+Feb 22 17:08:10 localhost dhcpd: Listening on LPF/em1/xx:ca:xx:fb:xx:xx/192.168.60.0/24
+Feb 22 17:08:10 localhost dhcpd: Sending on   LPF/em1/xx:ca:xx:fb:xx:xx/192.168.60.0/24
+Feb 22 17:08:10 localhost dhcpd: Sending on   Socket/fallback/fallback-net
+```
+
+### 1.7设置开机启动
+
+```
+# systemctl enable httpd
+Created symlink from /etc/systemd/system/multi-user.target.wants/httpd.service to /usr/lib/systemd/system/httpd.service.
+```
+
+## 2.安装TFTP服务
+### 2.1安装TFTP软件
+
+```
+# yum -y install tftp-server
+```
+
+### 2.2启动TFTP服务
+
+```
+# systemctl start tftp.socket
+```
+
+### 2.3查看TFTP状态
+
+```
+# systemctl status tftp.socket
+● tftp.socket - Tftp Server Activation Socket
+   Loaded: loaded (/usr/lib/systemd/system/tftp.socket; disabled; vendor preset: disabled)
+   Active: active (listening) since 五 2019-02-22 17:32:42 CST; 15s ago
+   Listen: [::]:69 (Datagram)
+
+2月 22 17:32:42 localhost.localdomain systemd[1]: Listening on Tftp Server Activation Socket.
+2月 22 17:32:42 localhost.localdomain systemd[1]: Starting Tftp Server Activation Socket.
+```
+
+### 2.4开机启动
+
+```
+# systemctl enable tftp
+Created symlink from /etc/systemd/system/sockets.target.wants/tftp.socket to /usr/lib/systemd/system/tftp.socket.
+```
+
+## 3.获取pxelinux.0系统
+### 3.1通过安装软件获取
+
+```
+# yum -y install syslinux
+```
+
+### 3.2复制pxelinux.0系统到tftp根目录
+
+```
+# cp /usr/share/syslinux/pxelinux.0 /var/lib/tftpboot/
+# ll /var/lib/tftpboot/
+总用量 28
+-rw-r--r--. 1 root root 26759 2月  22 17:40 pxelinux.0
+```
+
+## 4.安装httpd服务
+### 4.1.安装httpd服务
+
+```
+# yum -y install httpd
+```
+
+### 4.2启动httpd服务
+
+```
+# systemctl start httpd.service
+```
+
+### 4.3查看httpd服务状态
+
+```
+# systemctl status httpd.service
+● httpd.service - The Apache HTTP Server
+   Loaded: loaded (/usr/lib/systemd/system/httpd.service; enabled; vendor preset: disabled)
+   Active: active (running) since 五 2019-02-22 17:52:41 CST; 34s ago
+     Docs: man:httpd(8)
+           man:apachectl(8)
+ Main PID: 17355 (httpd)
+   Status: "Total requests: 0; Current requests/sec: 0; Current traffic:   0 B/sec"
+   CGroup: /system.slice/httpd.service
+           ├─17355 /usr/sbin/httpd -DFOREGROUND
+           ├─17356 /usr/sbin/httpd -DFOREGROUND
+           ├─17357 /usr/sbin/httpd -DFOREGROUND
+           ├─17358 /usr/sbin/httpd -DFOREGROUND
+           ├─17359 /usr/sbin/httpd -DFOREGROUND
+           ├─17360 /usr/sbin/httpd -DFOREGROUND
+           └─17361 /usr/sbin/httpd -DFOREGROUND
+
+2月 22 17:52:41 localhost.localdomain systemd[1]: Starting The Apache HTTP Server...
+2月 22 17:52:41 localhost.localdomain httpd[17355]: AH00558: httpd: Could not reliably determine the server's fully qualified domain nam...message
+2月 22 17:52:41 localhost.localdomain systemd[1]: Started The Apache HTTP Server.
+```
+
+### 4.4.访问httpd界面
+
+此时在浏览器输入http://192.168.60.15/即可看到httpd的欢迎界面。
+
+## 5.安装kickstart
+
+```
+# yum -y install system-config-kickstart
+```
+
+## 6.配置ks.cfg文件
+
+如果不使用kickstart图形界面来配置ks.cfg文件，也可以从已经安装好的CentOS系统中提取，路径为/root/anaconda-ks.cfg
+
+```
+# mkdir -p /var/www/html/ks/
+# cp /root/anaconda-ks.cfg /var/www/html/ks/Centos7.cfg
+```
+
+```
+#version=DEVEL
+# System authorization information
+auth --enableshadow --passalgo=sha512
+# Is New Install
+install
+# Use URL installation media
+url --url="http://192.168.60.15/CentOS7/"
+# Use Text install
+text
+# Run the Setup Agent on first boot
+firstboot --enable
+ignoredisk --only-use=sda
+# Keyboard layouts
+keyboard --vckeymap=us --xlayouts='us'
+# System language
+lang en_US.UTF-8 --addsupport=zh_CN.UTF-8
+
+# Network information
+#network  --bootproto=static --device=em1 --gateway=192.168.60.1 --ip=192.168.60.15 --nameserver=202.96.128.86 --netmask=255.255.255.0 --onboot=off --ipv6=auto --no-activate
+network  --bootproto=dhcp --device=em2 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em3 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em4 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p1 --onboot=yes --ipv6=auto
+network  --bootproto=dhcp --device=p1p2 --onboot=off --ipv6=auto
+network  --hostname=localhost.localdomain
+
+# Root password
+rootpw --iscrypted $6$Yz0C6oD8HUwFXFux$ujgos55c6Onb67lXbVJfO5XH5S8W4H12oymBkhk5z2tha94r5VTAjRsVyqmI7MolbyN0Tf6UHReXPQgsCIlhI1
+# System services
+services --disabled="chronyd"
+# System timezone
+timezone Asia/Shanghai --isUtc --nontp
+# System bootloader configuration
+bootloader --append=" crashkernel=auto" --location=mbr --boot-drive=sda
+# Partition clearing information
+clearpart --all --initlabel --drives=sda
+# Disk partitioning information
+part /home --fstype="xfs" --ondisk=sda --size=850443
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part / --fstype="xfs" --ondisk=sda --size=102400
+
+# Disabled selinux
+selinux --disabled
+
+# Disabled firewall
+firewall --disabled
+
+reboot
+
+
+%packages
+@^web-server-environment
+@base
+@core
+@web-server
+kexec-tools
+
+%end
+
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+
+%end
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+```
+
+## 7.挂载系统镜像
+### 7.1.挂载系统光盘
+
+可以将光盘直接挂载到http的目录下，但是这样的确定是光盘读取比较慢，不如将光盘的文件复制到硬盘中来得快。
+
+```
+# mkdir -p /var/www/html/CentOS7
+# mkdir /mnt/centos7
+# mount CentOS-7-x86_64-DVD-1810.iso /mnt/centos7/
+# cp -R /mnt/centos7/* /var/www/html/CentOS7/
+```
+
+### 7.2.复制相关文件到tftp根目录
+
+```
+# cp -a /var/www/html/CentOS7/isolinux/* /var/lib/tftpboot/
+# mkdir -p /var/lib/tftpboot/pxelinux.cfg
+# cp /var/www/html/CentOS7/isolinux/isolinux.cfg /var/lib/tftpboot/pxelinux.cfg/default
+```
+
+### 7.3.修改权限
+
+```
+# chmod -R 775 /var/www/html/
+```
+
+### 8.
