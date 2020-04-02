@@ -1,0 +1,963 @@
+# 一、环境
+
+暂且把主机称为kpmserver（kickstart pxe manager server）
+
+## 1.kpmserver系统及内核版本
+
+```
+# cat /etc/redhat-release
+CentOS Linux release 7.5.1804 (Core)
+# uname -r
+3.10.0-862.el7.x86_64
+```
+
+## 2.关闭selinux
+
+查看selinux当前的状态
+
+```
+# getenforce
+Enforcing
+```
+
+### 2.1永久关闭
+
+修改selinux配置文件，重启后永久生效
+
+```
+# vim /etc/selinux/config
+```
+
+将SELINUX的值设置为disabled
+
+```
+SELINUX=disabled
+```
+### 2.2临时关闭
+
+```
+# setenforce 0
+```
+
+### 2.3查看selinux状态
+
+```
+# getenforce
+Permissive
+```
+
+目前是临时关闭，因为改了配置文件，重启后会变成disabled
+
+## 3.关闭防火墙
+
+### 3.1查看防火墙状态
+
+```
+# systemctl status firewalld.service
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; enabled; vendor preset: enabled)
+   Active: active (running) since 一 2018-12-17 15:44:36 CST; 2 months 6 days ago
+     Docs: man:firewalld(1)
+ Main PID: 21653 (firewalld)
+   CGroup: /system.slice/firewalld.service
+           └─21653 /usr/bin/python -Es /usr/sbin/firewalld --nofork --nopid
+```
+
+### 3.2关闭防火墙
+
+```
+# systemctl stop firewalld.service
+```
+
+### 3.3确认防火墙状态
+
+```
+# systemctl status firewalld.service
+● firewalld.service - firewalld - dynamic firewall daemon
+   Loaded: loaded (/usr/lib/systemd/system/firewalld.service; disabled; vendor preset: enabled)
+   Active: inactive (dead)
+     Docs: man:firewalld(1)
+```
+
+## 4.确认网络信息
+
+确认当前的ip地址
+
+```
+# hostname -I
+192.168.60.9
+```
+
+# 二、安装相应软件
+## 1.配置yum源
+
+cobbler是依赖于epel源的，所以需要配置epel源
+
+```
+# curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo
+# curl -o /etc/yum.repos.d/epel.repo http://mirrors.aliyun.com/repo/epel-7.repo
+```
+
+## 2.安装cobbler及依赖软件等
+
+```
+# yum -y install cobbler cobbler-web dhcp tftp-server pykickstart httpd
+```
+
+## 3.语法检查
+
+启动cobbler语法检查前，先启动http与cobbler
+
+```
+# systemctl start httpd.service
+# systemctl start cobblerd.service
+```
+### 执行语法检查
+
+```
+# cobbler check
+```
+
+**检查结果**
+
+```
+1 : The 'server' field in /etc/cobbler/settings must be set to something other than localhost, or kickstarting features will not work.  This should be a resolvable hostname or IP for the boot server as reachable by all machines that will use it.
+2 : For PXE to be functional, the 'next_server' field in /etc/cobbler/settings must be set to something other than 127.0.0.1, and should match the IP of the boot server on the PXE network.
+3 : change 'disable' to 'no' in /etc/xinetd.d/tftp
+4 : Some network boot-loaders are missing from /var/lib/cobbler/loaders, you may run 'cobbler get-loaders' to download them, or, if you only want to handle x86/x86_64 netbooting, you may ensure that you have installed a *recent* version of the syslinux package installed and can ignore this message entirely.  Files in this directory, should you want to support all architectures, should include pxelinux.0, menu.c32, elilo.efi, and yaboot. The 'cobbler get-loaders' command is the easiest way to resolve these requirements.
+5 : enable and start rsyncd.service with systemctl
+6 : debmirror package is not installed, it will be required to manage debian deployments and repositories
+7 : The default password used by the sample templates for newly installed machines (default_password_crypted in /etc/cobbler/settings) is still set to 'cobbler' and should be changed, try: "openssl passwd -1 -salt 'random-phrase-here' 'your-password-here'" to generate new one
+8 : fencing tools were not found, and are required to use the (optional) power management features. install cman or fence-agents to use them
+
+Restart cobblerd and then run 'cobbler sync' to apply changes.
+```
+
+## 4.解决报错
+
+### 错误1
+
+```
+1 : The 'server' field in /etc/cobbler/settings must be set to something other than localhost, or kickstarting features will not work.  This should be a resolvable hostname or IP for the boot server as reachable by all machines that will use it.
+```
+
+**解决办法**
+
+```
+# cp /etc/cobbler/settings{,.ori}
+# sed -i 's/server: 127.0.0.1/server: 192.168.60.9/' /etc/cobbler/settings
+```
+
+### 错误2
+
+```
+2 : For PXE to be functional, the 'next_server' field in /etc/cobbler/settings must be set to something other than 127.0.0.1, and should match the IP of the boot server on the PXE network.
+```
+
+**解决办法**
+
+```
+# sed -i 's/next_server: 127.0.0.1/next_server: 192.168.60.9/' /etc/cobbler/settings
+```
+
+### 错误3
+
+```
+3 : change 'disable' to 'no' in /etc/xinetd.d/tftp
+```
+
+**解决办法**
+
+```
+# sed 's#yes#no#g' /etc/xinetd.d/tftp -i
+```
+
+### 错误4
+
+```
+4 : Some network boot-loaders are missing from /var/lib/cobbler/loaders, you may run 'cobbler get-loaders' to download them, or, if you only want to handle x86/x86_64 netbooting, you may ensure that you have installed a *recent* version of the syslinux package installed and can ignore this message entirely.  Files in this directory, should you want to support all architectures, should include pxelinux.0, menu.c32, elilo.efi, and yaboot. The 'cobbler get-loaders' command is the easiest way to resolve these requirements.
+```
+
+**解决办法**
+
+```
+# cobbler get-loaders
+# ll /var/lib/cobbler/loaders/
+总用量 1128
+-rw-r--r-- 1 root root    631 1月  28 20:08 COPYING.elilo
+-rw-r--r-- 1 root root  18007 1月  28 20:08 COPYING.syslinux
+-rw-r--r-- 1 root root    626 1月  28 20:08 COPYING.yaboot
+-rw-r--r-- 1 root root 356493 1月  28 20:08 elilo-ia64.efi
+-rw-r--r-- 1 root root 243679 1月  28 20:08 grub-x86_64.efi
+-rw-r--r-- 1 root root 237224 1月  28 20:08 grub-x86.efi
+-rw-r--r-- 1 root root  54964 1月  28 20:08 menu.c32
+-rw-r--r-- 1 root root  16794 1月  28 20:08 pxelinux.0
+-rw-r--r-- 1 root root   1054 1月  28 20:08 README
+-rw-r--r-- 1 root root 198236 1月  28 20:08 yaboot
+```
+
+### 错误5
+
+```
+5 : enable and start rsyncd.service with systemctl
+```
+
+**解决办法**
+
+```
+# systemctl start rsyncd.service
+# systemctl enable rsyncd.service
+Created symlink from /etc/systemd/system/multi-user.target.wants/rsyncd.service to /usr/lib/systemd/system/rsyncd.service.
+```
+
+### 错误6
+
+```
+6 : debmirror package is not installed, it will be required to manage debian deployments and repositories
+```
+
+**解决办法**
+
+debian操作系统相关，centos无需修改
+
+### 错误7
+
+```
+7 : The default password used by the sample templates for newly installed machines (default_password_crypted in /etc/cobbler/settings) is still set to 'cobbler' and should be changed, try: "openssl passwd -1 -salt 'random-phrase-here' 'your-password-here'" to generate new one
+```
+
+**解决办法**
+
+默认密码在/etc/cobbler/settings中，按照提示修改ssl密码即可
+
+```
+# openssl passwd -1 -salt '$1$mF86/UHC$WvcIcX2t6crBz2onWxyac.' '123456'
+$1$$1$mF86/$5SeHd8JFfqaKz44yvOjVI1
+```
+
+将生成的随机密码，替换到/etc/cobbler/settings中的
+
+```
+default_password_crypted: "$1$$1$mF86/$5SeHd8JFfqaKz44yvOjVI1"
+```
+
+### 管理dhcp
+
+```
+# sed -i 's/manage_dhcp: 0/manage_dhcp: 1/' /etc/cobbler/settings
+```
+
+### 防止重装
+
+```
+# sed -i 's/pxe_just_once: 0/pxe_just_once: 1/' /etc/cobbler/settings
+```
+
+### 修改dhcp模板
+
+```
+# sed -i.ori 's#192.168.1#192.168.60#g;22d;23d' /etc/cobbler/dhcp.template
+```
+
+### 重启cobblerd服务
+
+```
+# systemctl restart cobblerd.service
+# cobbler sync
+```
+
+### 重新检查
+
+```
+#  cobbler check
+The following are potential configuration items that you may want to fix:
+
+1 : debmirror package is not installed, it will be required to manage debian deployments and repositories
+2 : fencing tools were not found, and are required to use the (optional) power management features. install cman or fence-agents to use them
+
+Restart cobblerd and then run 'cobbler sync' to apply changes.
+```
+
+### 重启所有服务
+
+```
+# systemctl restart httpd.service
+# systemctl restart cobblerd.service
+# systemctl restart dhcpd.service
+# systemctl restart rsyncd.service
+# systemctl restart tftp.socket
+```
+
+### 设置开机启动
+
+```
+# systemctl enable cobblerd.service
+# systemctl enable httpd.service
+# systemctl list-unit-files | egrep "cobblerd|\bdhcpd\b|httpd|xinetd"
+cobblerd.service                              enabled
+dhcpd.service                                 enabled
+httpd.service                                 enabled
+```
+
+# 错误解决
+## 登录Cobbler报错
+### 分析登录Cobbler报错的原因
+在登录cobbler时，界面提示`Internal Server Error`
+
+查看ssl日志`cat /var/log/httpd/ssl_error_log`，报错如下：
+
+```
+[Thu Jun 27 03:58:58.762844 2019] [:error] [pid 6958] [remote 192.168.96.10:192] mod_wsgi (pid=6958): Exception occurred processing WSGI script '/usr/share/cobbler/web/cobbler.wsgi'.
+[Thu Jun 27 03:58:58.762893 2019] [:error] [pid 6958] [remote 192.168.96.10:192] Traceback (most recent call last):
+[Thu Jun 27 03:58:58.762911 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/share/cobbler/web/cobbler.wsgi", line 26, in application
+[Thu Jun 27 03:58:58.762937 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     _application = get_wsgi_application()
+[Thu Jun 27 03:58:58.762946 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/lib/python2.7/site-packages/django/core/wsgi.py", line 13, in get_wsgi_application
+[Thu Jun 27 03:58:58.762963 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     django.setup(set_prefix=False)
+[Thu Jun 27 03:58:58.762972 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/lib/python2.7/site-packages/django/__init__.py", line 22, in setup
+[Thu Jun 27 03:58:58.762986 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     configure_logging(settings.LOGGING_CONFIG, settings.LOGGING)
+[Thu Jun 27 03:58:58.762994 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/lib/python2.7/site-packages/django/conf/__init__.py", line 56, in __getattr__
+[Thu Jun 27 03:58:58.763009 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     self._setup(name)
+[Thu Jun 27 03:58:58.763017 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/lib/python2.7/site-packages/django/conf/__init__.py", line 41, in _setup
+[Thu Jun 27 03:58:58.763031 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     self._wrapped = Settings(settings_module)
+[Thu Jun 27 03:58:58.763039 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/lib/python2.7/site-packages/django/conf/__init__.py", line 110, in __init__
+[Thu Jun 27 03:58:58.763053 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     mod = importlib.import_module(self.SETTINGS_MODULE)
+[Thu Jun 27 03:58:58.763061 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/lib64/python2.7/importlib/__init__.py", line 37, in import_module
+[Thu Jun 27 03:58:58.763076 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     __import__(name)
+[Thu Jun 27 03:58:58.763084 2019] [:error] [pid 6958] [remote 192.168.96.10:192]   File "/usr/share/cobbler/web/settings.py", line 89, in <module>
+[Thu Jun 27 03:58:58.763098 2019] [:error] [pid 6958] [remote 192.168.96.10:192]     from django.conf.global_settings import TEMPLATE_CONTEXT_PROCESSORS
+[Thu Jun 27 03:58:58.763114 2019] [:error] [pid 6958] [remote 192.168.96.10:192] ImportError: cannot import name TEMPLATE_CONTEXT_PROCESSORS
+```
+
+根据错误日志，查看cobbler的配置文件
+
+```
+sed -n '38,41p' /usr/share/cobbler/web/settings.py
+```
+
+内容如下:
+
+```
+if django.VERSION[0] == 1 and django.VERSION[1] < 4:
+    ADMIN_MEDIA_PREFIX = '/media/'
+else:
+    STATIC_URL = '/media/'
+```
+
+再查看89行的内容
+
+```
+sed -n '89p' /usr/share/cobbler/web/settings.py
+```
+
+内容如下:
+
+```
+from django.conf.global_settings import TEMPLATE_CONTEXT_PROCESSORS
+```
+
+根据这些情况，可以分析出是django的版本问题。
+
+### 解决登录Cobbler报错的故障
+
+根据上面分析出是django的版本问题，升级django的版本即可。
+
+#### 下载pip.py
+
+```
+wget https://bootstrap.pypa.io/get-pip.py
+```
+
+#### 运行pip.py
+
+```
+python get-pip.py
+```
+
+#### 安装pip
+
+```
+pip install Django==1.8.9
+```
+
+#### 查看pip版本
+
+```
+python -c "import django; print(django.get_version())"
+```
+
+#### 重启httpd
+
+```
+systemctl restart httpd
+```
+
+
+# 三、cobbler的web及界面操作
+
+浏览器访问https://192.168.60.9/cobbler_web
+注意CentOS7中cobbler只支持https访问。
+账号密码默认均为cobbler
+
+## 1.挂载导入镜像
+
+### 挂载镜像
+
+```
+# mkdir -p /mnt/centos7
+# mkdir -p /mnt/centos6
+# mount CentOS-6.10-x86_64-bin-DVD1.iso /mnt/centos6/
+# mount CentOS-7-x86_64-DVD-1810.iso /mnt/centos7/
+```
+
+### 导入镜像
+
+```
+#  ps -ef |grep rsync
+root      7254     1  0 3月09 ?       00:00:00 /usr/bin/rsync --daemon --no-detach
+root     10823  9555 50 09:58 ?        00:00:04 rsync -a /mnt/centos7/ /var/www/cobbler/ks_mirror/CentOS7.6-1810-x86_64 --progress
+root     10824 10823  0 09:58 ?        00:00:00 rsync -a /mnt/centos7/ /var/www/cobbler/ks_mirror/CentOS7.6-1810-x86_64 --progress
+root     10825 10824 26 09:58 ?        00:00:02 rsync -a /mnt/centos7/ /var/www/cobbler/ks_mirror/CentOS7.6-1810-x86_64 --progress
+root     10831  9771  0 09:58 pts/0    00:00:00 grep --color=auto rsync
+```
+
+```
+#  ps -ef |grep rsync
+root      7254     1  0 3月09 ?       00:00:00 /usr/bin/rsync --daemon --no-detach
+root     10986  9555 53 10:02 ?        00:00:01 rsync -a /mnt/centos6/ /var/www/cobbler/ks_mirror/CentOS6.10-x86_64 --progress
+root     10987 10986  0 10:02 ?        00:00:00 rsync -a /mnt/centos6/ /var/www/cobbler/ks_mirror/CentOS6.10-x86_64 --progress
+root     10988 10987 10 10:02 ?        00:00:00 rsync -a /mnt/centos6/ /var/www/cobbler/ks_mirror/CentOS6.10-x86_64 --progress
+root     10992  9771  0 10:02 pts/0    00:00:00 grep --color=auto rsync
+```
+
+导入完成后，镜像安装引导文件存放的路径
+
+```
+# pwd
+/var/www/cobbler/images
+```
+
+镜像文件路径
+
+```
+# pwd
+/var/www/cobbler/ks_mirror
+```
+
+### 默认ks文件
+
+**centos7**
+
+```
+# This kickstart file should only be used with EL > 5 and/or Fedora > 7.
+# For older versions please use the sample.ks kickstart file.
+
+#platform=x86, AMD64, or Intel EM64T
+# System authorization information
+auth  --useshadow  --enablemd5
+# System bootloader configuration
+bootloader --location=mbr
+# Partition clearing information
+clearpart --all --initlabel
+# Use text mode install
+text
+# Firewall configuration
+firewall --enabled
+# Run the Setup Agent on first boot
+firstboot --disable
+# System keyboard
+keyboard us
+# System language
+lang en_US
+# Use network installation
+url --url=http://192.168.60.9/cblr/links/CentOS7.6-1810-x86_64
+# If any cobbler repo definitions were referenced in the kickstart profile, include them here.
+repo --name=source-1 --baseurl=http://192.168.60.9/cobbler/ks_mirror/CentOS7.6-1810-x86_64
+
+# Network information
+network --bootproto=dhcp --device=eth0 --onboot=on  
+
+# Reboot after installation
+reboot
+
+#Root password
+rootpw --iscrypted $1$$1$mF86/$BarA2mDlrZvqLtYiU/whn/
+# SELinux configuration
+selinux --disabled
+# Do not configure the X Window System
+skipx
+# System timezone
+timezone  America/New_York
+# Install OS instead of upgrade
+install
+# Clear the Master Boot Record
+zerombr
+# Allow anaconda to partition the system as needed
+autopart
+
+%pre
+set -x -v
+exec 1>/tmp/ks-pre.log 2>&1
+
+# Once root's homedir is there, copy over the log.
+while : ; do
+    sleep 10
+    if [ -d /mnt/sysimage/root ]; then
+        cp /tmp/ks-pre.log /mnt/sysimage/root/
+        logger "Copied %pre section log to system"
+        break
+    fi
+done &
+
+
+curl "http://192.168.60.9/cblr/svc/op/trig/mode/pre/profile/CentOS7.6-1810-x86_64" -o /dev/null
+
+# Enable installation monitoring
+
+%end
+
+%packages
+
+
+%end
+
+%post --nochroot
+set -x -v
+exec 1>/mnt/sysimage/root/ks-post-nochroot.log 2>&1
+
+%end
+
+%post
+set -x -v
+exec 1>/root/ks-post.log 2>&1
+
+# Start yum configuration
+curl "http://192.168.60.9/cblr/svc/op/yum/profile/CentOS7.6-1810-x86_64" --output /etc/yum.repos.d/cobbler-config.repo
+
+# End yum configuration
+
+
+
+# Start post_install_network_config generated code
+# End post_install_network_config generated code
+
+
+
+
+# Start download cobbler managed config files (if applicable)
+# End download cobbler managed config files (if applicable)
+
+# Start koan environment setup
+echo "export COBBLER_SERVER=192.168.60.9" > /etc/profile.d/cobbler.sh
+echo "setenv COBBLER_SERVER 192.168.60.9" > /etc/profile.d/cobbler.csh
+# End koan environment setup
+
+# begin Red Hat management server registration
+# not configured to register to any Red Hat management server (ok)
+# end Red Hat management server registration
+
+# Begin cobbler registration
+# cobbler registration is disabled in /etc/cobbler/settings
+# End cobbler registration
+
+# Enable post-install boot notification
+
+# Start final steps
+
+curl "http://192.168.60.9/cblr/svc/op/ks/profile/CentOS7.6-1810-x86_64" -o /root/cobbler.ks
+curl "http://192.168.60.9/cblr/svc/op/trig/mode/post/profile/CentOS7.6-1810-x86_64" -o /dev/null
+# End final steps
+%end
+
+```
+
+**centos6**
+
+```
+# This kickstart file should only be used with EL > 5 and/or Fedora > 7.
+# For older versions please use the sample.ks kickstart file.
+
+#platform=x86, AMD64, or Intel EM64T
+# System authorization information
+auth  --useshadow  --enablemd5
+# System bootloader configuration
+bootloader --location=mbr
+# Partition clearing information
+clearpart --all --initlabel
+# Use text mode install
+text
+# Firewall configuration
+firewall --enabled
+# Run the Setup Agent on first boot
+firstboot --disable
+# System keyboard
+keyboard us
+# System language
+lang en_US
+# Use network installation
+url --url=http://192.168.60.9/cblr/links/CentOS6.10-x86_64
+# If any cobbler repo definitions were referenced in the kickstart profile, include them here.
+repo --name=source-1 --baseurl=http://192.168.60.9/cobbler/ks_mirror/CentOS6.10-x86_64
+
+# Network information
+network --bootproto=dhcp --device=eth0 --onboot=on  
+
+# Reboot after installation
+reboot
+
+#Root password
+rootpw --iscrypted $1$$1$mF86/$BarA2mDlrZvqLtYiU/whn/
+# SELinux configuration
+selinux --disabled
+# Do not configure the X Window System
+skipx
+# System timezone
+timezone  America/New_York
+# Install OS instead of upgrade
+install
+# Clear the Master Boot Record
+zerombr
+# Allow anaconda to partition the system as needed
+autopart
+
+%pre
+set -x -v
+exec 1>/tmp/ks-pre.log 2>&1
+
+# Once root's homedir is there, copy over the log.
+while : ; do
+    sleep 10
+    if [ -d /mnt/sysimage/root ]; then
+        cp /tmp/ks-pre.log /mnt/sysimage/root/
+        logger "Copied %pre section log to system"
+        break
+    fi
+done &
+
+
+curl "http://192.168.60.9/cblr/svc/op/trig/mode/pre/profile/CentOS6.10-x86_64" -o /dev/null
+
+# Enable installation monitoring
+
+%end
+
+%packages
+
+
+%end
+
+%post --nochroot
+set -x -v
+exec 1>/mnt/sysimage/root/ks-post-nochroot.log 2>&1
+
+%end
+
+%post
+set -x -v
+exec 1>/root/ks-post.log 2>&1
+
+# Start yum configuration
+curl "http://192.168.60.9/cblr/svc/op/yum/profile/CentOS6.10-x86_64" --output /etc/yum.repos.d/cobbler-config.repo
+
+# End yum configuration
+
+
+
+# Start post_install_network_config generated code
+# End post_install_network_config generated code
+
+
+
+
+# Start download cobbler managed config files (if applicable)
+# End download cobbler managed config files (if applicable)
+
+# Start koan environment setup
+echo "export COBBLER_SERVER=192.168.60.9" > /etc/profile.d/cobbler.sh
+echo "setenv COBBLER_SERVER 192.168.60.9" > /etc/profile.d/cobbler.csh
+# End koan environment setup
+
+# begin Red Hat management server registration
+# not configured to register to any Red Hat management server (ok)
+# end Red Hat management server registration
+
+# Begin cobbler registration
+# cobbler registration is disabled in /etc/cobbler/settings
+# End cobbler registration
+
+# Enable post-install boot notification
+
+# Start final steps
+
+curl "http://192.168.60.9/cblr/svc/op/ks/profile/CentOS6.10-x86_64" -o /root/cobbler.ks
+curl "http://192.168.60.9/cblr/svc/op/trig/mode/post/profile/CentOS6.10-x86_64" -o /dev/null
+# End final steps
+%end
+
+```
+
+### 安装系统
+
+导入镜像完成后，就可以重启客户端选择pxe的方式进行操作系统安装了。
+
+# 四、定制化操作系统
+## 1.添加内核参数
+
+  1.1 查看导入的镜像，点击edit
+
+
+  1.2 在内核参数中添加net.ifnames=0 biosdevname=0
+  能够让显示的网卡变为eth0，而不是CentOS7中的ens33，修改后保存即可
+
+
+## 2.查看镜像属性
+
+点击Profiles再点击具体的镜像名即可
+
+
+## 3.编写ks文件
+
+cobbler是有默认的ks文件的，可以通过Profiles中镜像名后面的 View KickStart查看详细内容。但默认的ks不一定是我们想要的。
+我们可以通过KickStart Templates中的 Create New Kickstart File 创建新的模板，
+
+```
+#version=DEVEL
+# System authorization information
+auth --enableshadow --passalgo=sha512
+# Is New Install
+install
+# Use URL installation media
+url --url=$tree
+# Use Text install
+text
+# Run the Setup Agent on first boot
+firstboot --enable
+ignoredisk --only-use=sda
+
+# Keyboard layouts
+keyboard --vckeymap=us --xlayouts='us'
+# System language
+lang en_US.UTF-8 --addsupport=zh_CN.UTF-8
+
+# Network information
+network  --bootproto=dhcp --device=em1 --onboot=yes --ipv6=auto
+network  --bootproto=dhcp --device=em2 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em3 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=em4 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p1 --onboot=off --ipv6=auto
+network  --bootproto=dhcp --device=p1p2 --onboot=off --ipv6=auto
+network  --hostname=localhost.localdomain
+
+# Root password
+rootpw --iscrypted $6$Yz0C6oD8HUwFXFux$ujgos55c6Onb67lXbVJfO5XH5S8W4H12oymBkhk5z2tha94r5VTAjRsVyqmI7MolbyN0Tf6UHReXPQgsCIlhI1
+# System services
+services --disabled="chronyd"
+# System timezone
+timezone Asia/Shanghai --isUtc --nontp
+
+zerombr
+# System bootloader configuration
+bootloader --append=" crashkernel=auto" --location=mbr --boot-drive=sda
+# Partition clearing information
+clearpart --all --initlabel --drives=sda
+# Disk partitioning information
+part /home --fstype="xfs" --ondisk=sda --size=850443 --grow
+part /boot --fstype="xfs" --ondisk=sda --size=500
+part / --fstype="xfs" --ondisk=sda --size=102400
+
+
+# Disabled selinux
+selinux --disabled
+
+# Disabled firewall
+firewall --disabled
+
+reboot
+
+
+
+%packages
+@^web-server-environment
+@base
+@core
+@web-server
+kexec-tools
+
+%end
+
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+
+%end
+
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+```
+
+# 五、自定义安装系统
+
+有时候根据场景需要，我们需要针对不同的服务器进行不同的安装，例如hostname或者ip信息等等。当然，这些cobbler都是支持的。
+
+## 1.新建系统
+
+Systems -> Create New System
+
+```
+```
+## 2.自定义系统信息
+
+### 2.1. General
+
+在General中主要是填写Name、选择Profile、以及KickStart的选择。当然也可以选择Kernel Options等。视实际需要而定。
+
+**Name**
+
+cobbler中文件名称，例如填写的Ghost
+
+**Owner**
+
+Owner的默认值是<<inherit>>,可不必重新配置
+
+**Profile**
+
+选择镜像，例如选择的CentOS7.6-1810-x86_64
+
+**Image**
+
+Image的默认值是<<None>>
+
+**Status**
+
+Status包含production、acceptance、testing、development，选择production就好。
+
+**Kernel Options**
+
+Kernel Options可根据需要填写，例如可加入net.ifnames=0 biosdevname=0修改网卡名称为eth0,但是不熟悉的Kernel的话，不建议填写。
+
+**Kernel Options(Post Install)**
+
+Kernel Options(Post Install) 默认为空，可根据需要填写。
+
+**Kickstart Metadata**
+
+Kickstart Metadata默认为空，可根据需要填写。
+
+**Internal proxy**
+
+Internal proxy默认为<<inherit>>,可根据需要修改，保持默认也没问题。
+
+**Netboot Enabled**
+
+Netboot Enabled默认已经选择，根据需要可不选择。
+
+**KickStart**
+
+选择KickStart，这里可以选择之前已经建好的ks文件，例如CentOS7.6-1810-x86_64.cfg，当然，也可以重新建立ks文件，这样更好的自定义每一台的服务器的安装信息。
+
+### 2.2. Advanced
+
+Advance包括 Enable gPXE 及 Server Override两项
+
+**Enable gPXE**
+
+Enable gPXE默认是不勾选启用的，保持默认即可。
+
+**Server Override**
+
+Server Override默认为<<inherit>>,可保持不变。
+
+### 2.3. Networking(Global)
+
+Networking(Global)包含了Hostname、Gateway、Name Servers、Name Servers Search Path、IPv6 Default Device、IPv6 Autoconfiguration六大项配置。
+
+**Hostname**
+
+Hostname(主机名)，自定义填写，例如填写的Ghost-Server。
+
+**Gateway**
+
+Gateway(网关)，根据实际网络情况填写，例如填写的 192.168.60.1
+
+**Name Servers**
+
+Name Servers(DNS)，根据实际情况填写，例如 8.8.8.8
+
+**Name Servers Search Path**
+
+Name Servers Search Path可不填写，留空。
+
+**IPv6 Default Device**
+
+IPv6 Default Device，IPv6默认设备，没有的话，可不填写。
+
+**IPv6 Autoconfiguration**
+
+IPv6 Autoconfiguration，IPv6自动配置，没有IPv6可不填写。
+
+### 2.4. Networking
+
+Networking里面就是网络的详细配置。
+
+**Add Interface**
+
+Add Interface即添加网口，例如添加em1网口、em2网口等等。
+
+**Edit Interface**
+
+Edit Interface即编辑网口，例如对误加的网口进行时删除，或者重命名。
+
+**MAC Address**
+
+MAC Address即网卡的MAC，即要安装的主机的MAC地址。
+
+**MTU**
+
+网卡的MTU值，不熟悉网络的话，不建议配置，保持默认为空就行。
+
+**IP Address**
+
+IP Address即IP地址配置，根据实际填写。
+
+**Interface Type**
+
+Interface Type即网口类型，默认不选择就行。
+
+**Management Interface**
+
+勾选static后会弹出来，默认不选择。
+
+**Static**
+
+Static即网络配置类型，使用静态地址配置。
+
+**Subnet Mask**
+
+Subnet Mask即子网掩码，根据实际网络填写。
+
+**Pre-Interface Gateway**
+
+Pre-Interface Gateway即网关配置，根据实际填写。
+
+**DHCP Tag**
+
+**DNS Name**
+
+**Static Routes**
+
+**Virt Bridge**
+
+**IPv6 Address**
+
+**IPv6 Prefix**
+
+**IPv6 Secondaries**
+
+**IPv6 MTU**
+
+**IPv6 Static Routes**
+
+**IPv6 Default Gateway**
+
+**CHAMES**
+
